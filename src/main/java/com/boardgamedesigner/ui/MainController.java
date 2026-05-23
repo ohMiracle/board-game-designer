@@ -30,7 +30,6 @@ import java.util.function.Function;
 public class MainController {
 
     @FXML private Button chooseFolderBtn;
-    @FXML private Button loadProjectBtn;
     @FXML private Button splitImageBtn;
     @FXML private Button selectAllBtn;
     @FXML private Button deselectAllBtn;
@@ -94,7 +93,6 @@ public class MainController {
         cardBackListView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
 
         chooseFolderBtn.setOnAction(e -> onChooseFolder());
-        loadProjectBtn.setOnAction(e -> onLoadProject());
         splitImageBtn.setOnAction(e -> onSplitImage());
         selectAllBtn.setOnAction(e -> onCopySelected());
         deselectAllBtn.setOnAction(e -> onRemoveSelected());
@@ -146,26 +144,6 @@ public class MainController {
 
     // ---- 项目保存/加载 ----
 
-    private void onLoadProject() {
-        if (cardFolderPath == null) {
-            showError("提示", "请先选择卡牌文件夹");
-            return;
-        }
-        Path path = cardFolderPath.resolve("default.json");
-        if (!path.toFile().exists()) {
-            statusLabel.setText("未找到 default.json");
-            return;
-        }
-        try {
-            ProjectFileService.LoadResult result = projectFileService.load(path, imageLoadService);
-            cardList.setAll(result.cards);
-            cardBackList.setAll(result.cardBacks);
-            onCardListChanged();
-            statusLabel.setText("项目已加载: default.json");
-        } catch (Exception e) {
-            showError("加载失败", e.getMessage());
-        }
-    }
 
     // ---- 图片分切 ----
 
