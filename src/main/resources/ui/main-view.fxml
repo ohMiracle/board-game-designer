@@ -15,8 +15,13 @@
         <Button fx:id="chooseFolderBtn" text="选择卡牌文件夹..."
                 styleClass="primary-btn"/>
         <Separator orientation="VERTICAL"/>
+        <Button fx:id="splitImageBtn" text="分切图片..."/>
+        <Separator orientation="VERTICAL"/>
         <Button fx:id="selectAllBtn" text="复制选中"/>
         <Button fx:id="deselectAllBtn" text="删除选中"/>
+        <Separator orientation="VERTICAL"/>
+        <Button fx:id="saveProjectBtn" text="保存项目"/>
+        <Button fx:id="loadProjectBtn" text="加载项目"/>
         <Separator orientation="VERTICAL"/>
         <Button fx:id="exportBtn" text="导出 PDF..."
                 styleClass="primary-btn" disable="true"/>

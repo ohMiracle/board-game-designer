@@ -6,12 +6,15 @@ import com.boardgamedesigner.card.model.CardSheet;
 import com.boardgamedesigner.card.service.ImageLoadService;
 import com.boardgamedesigner.card.service.LayoutCalculator;
 import com.boardgamedesigner.card.service.PdfExportService;
+import com.boardgamedesigner.card.service.ProjectFileService;
+import com.boardgamedesigner.util.ImageSplitService;
 import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 
@@ -27,6 +30,9 @@ import java.util.function.Function;
 public class MainController {
 
     @FXML private Button chooseFolderBtn;
+    @FXML private Button saveProjectBtn;
+    @FXML private Button loadProjectBtn;
+    @FXML private Button splitImageBtn;
     @FXML private Button selectAllBtn;
     @FXML private Button deselectAllBtn;
     @FXML private Button exportBtn;
@@ -41,6 +47,8 @@ public class MainController {
     private final ImageLoadService imageLoadService = new ImageLoadService();
     private final LayoutCalculator layoutCalculator = new LayoutCalculator();
     private final PdfExportService pdfExportService = new PdfExportService();
+    private final ProjectFileService projectFileService = new ProjectFileService();
+    private final ImageSplitService imageSplitService = new ImageSplitService();
 
     private final ObservableList<CardImage> cardList = FXCollections.observableArrayList();
     private final ObservableList<CardBack> cardBackList = FXCollections.observableArrayList();
@@ -87,6 +95,9 @@ public class MainController {
         cardBackListView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
 
         chooseFolderBtn.setOnAction(e -> onChooseFolder());
+        saveProjectBtn.setOnAction(e -> onSaveProject());
+        loadProjectBtn.setOnAction(e -> onLoadProject());
+        splitImageBtn.setOnAction(e -> onSplitImage());
         selectAllBtn.setOnAction(e -> onCopySelected());
         deselectAllBtn.setOnAction(e -> onRemoveSelected());
         exportBtn.setOnAction(e -> onExportPdf());
@@ -104,21 +115,143 @@ public class MainController {
         if (dir == null) return;
 
         cardFolderPath = dir.toPath();
+
+        // 优先加载已有的项目文件
+        Path projectFile = cardFolderPath.resolve("default.json");
+        if (projectFile.toFile().exists()) {
+            try {
+                ProjectFileService.LoadResult result = projectFileService.load(projectFile, imageLoadService);
+                cardList.setAll(result.cards);
+                cardBackList.setAll(result.cardBacks);
+                statusLabel.setText("已自动加载 default.json");
+            } catch (Exception e) {
+                // 加载失败则回退到正常扫描
+                loadFolderFresh();
+            }
+        } else {
+            loadFolderFresh();
+        }
+
+        refreshSheets();
+        updateStatus();
+        updateCountLabels();
+        exportBtn.setDisable(cardList.isEmpty());
+        renderAllPreviews();
+    }
+
+    private void loadFolderFresh() {
+        List<CardImage> loaded = imageLoadService.loadFromFolder(cardFolderPath);
+        cardList.setAll(loaded);
+        cardBackList.clear();
+        autoDetectCardBacks();
+    }
+
+    // ---- 项目保存/加载 ----
+
+    private void onSaveProject() {
+        if (cardFolderPath == null) {
+            showError("提示", "请先选择卡牌文件夹");
+            return;
+        }
+        Path path = cardFolderPath.resolve("default.json");
         try {
-            List<CardImage> loaded = imageLoadService.loadFromFolder(cardFolderPath);
-            cardList.setAll(loaded);
-            cardBackList.clear();
+            projectFileService.save(path, cardFolderPath, new ArrayList<>(cardList), new ArrayList<>(cardBackList));
+            statusLabel.setText("项目已保存: default.json");
+        } catch (Exception e) {
+            showError("保存失败", e.getMessage());
+        }
+    }
 
-            autoDetectCardBacks();
-
-            refreshSheets();
-            updateStatus();
-            updateCountLabels();
-            exportBtn.setDisable(cardList.isEmpty());
-            renderAllPreviews();
+    private void onLoadProject() {
+        if (cardFolderPath == null) {
+            showError("提示", "请先选择卡牌文件夹");
+            return;
+        }
+        Path path = cardFolderPath.resolve("default.json");
+        if (!path.toFile().exists()) {
+            statusLabel.setText("未找到 default.json");
+            return;
+        }
+        try {
+            ProjectFileService.LoadResult result = projectFileService.load(path, imageLoadService);
+            cardList.setAll(result.cards);
+            cardBackList.setAll(result.cardBacks);
+            onCardListChanged();
+            statusLabel.setText("项目已加载: default.json");
         } catch (Exception e) {
             showError("加载失败", e.getMessage());
         }
+    }
+
+    // ---- 图片分切 ----
+
+    private void onSplitImage() {
+        CardImage selected = cardListView.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            showError("提示", "请先在卡牌列表中选择一张要分切的图片");
+            return;
+        }
+        if (cardFolderPath == null) {
+            showError("提示", "请先选择卡牌文件夹");
+            return;
+        }
+
+        // 行列数输入对话框
+        Dialog<int[]> dialog = new Dialog<>();
+        dialog.setTitle("图片分切");
+        dialog.setHeaderText("将 \"" + selected.getFileName() + "\" 均匀分切");
+
+        GridPane grid = new GridPane();
+        grid.setHgap(10);
+        grid.setVgap(10);
+        Spinner<Integer> colsSpinner = new Spinner<>(1, 20, 3);
+        Spinner<Integer> rowsSpinner = new Spinner<>(1, 20, 3);
+        colsSpinner.setEditable(true);
+        rowsSpinner.setEditable(true);
+        grid.add(new Label("列数:"), 0, 0);
+        grid.add(colsSpinner, 1, 0);
+        grid.add(new Label("行数:"), 0, 1);
+        grid.add(rowsSpinner, 1, 1);
+        dialog.getDialogPane().setContent(grid);
+
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        dialog.setResultConverter(bt -> {
+            if (bt == ButtonType.OK) return new int[]{colsSpinner.getValue(), rowsSpinner.getValue()};
+            return null;
+        });
+
+        Optional<int[]> result = dialog.showAndWait();
+        if (result.isEmpty()) return;
+
+        int cols = result.get()[0];
+        int rows = result.get()[1];
+        Path sourcePath = selected.getSourcePath();
+
+        statusLabel.setText("正在分切图片...");
+
+        Task<List<CardImage>> task = new Task<>() {
+            @Override
+            protected List<CardImage> call() {
+                return imageSplitService.split(sourcePath, cardFolderPath, cols, rows);
+            }
+
+            @Override
+            protected void succeeded() {
+                List<CardImage> split = getValue();
+                cardList.remove(selected);
+                cardList.addAll(split);
+                statusLabel.setText("分切完成，切出 " + split.size() + " 张卡牌");
+                onCardListChanged();
+            }
+
+            @Override
+            protected void failed() {
+                statusLabel.setText("分切失败");
+                showError("分切失败", getException().getMessage());
+            }
+        };
+
+        new Thread(task).start();
     }
 
     private void autoDetectCardBacks() {
