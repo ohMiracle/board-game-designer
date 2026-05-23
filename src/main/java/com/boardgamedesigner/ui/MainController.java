@@ -30,7 +30,6 @@ import java.util.function.Function;
 public class MainController {
 
     @FXML private Button chooseFolderBtn;
-    @FXML private Button saveProjectBtn;
     @FXML private Button loadProjectBtn;
     @FXML private Button splitImageBtn;
     @FXML private Button selectAllBtn;
@@ -95,7 +94,6 @@ public class MainController {
         cardBackListView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
 
         chooseFolderBtn.setOnAction(e -> onChooseFolder());
-        saveProjectBtn.setOnAction(e -> onSaveProject());
         loadProjectBtn.setOnAction(e -> onLoadProject());
         splitImageBtn.setOnAction(e -> onSplitImage());
         selectAllBtn.setOnAction(e -> onCopySelected());
@@ -147,20 +145,6 @@ public class MainController {
     }
 
     // ---- 项目保存/加载 ----
-
-    private void onSaveProject() {
-        if (cardFolderPath == null) {
-            showError("提示", "请先选择卡牌文件夹");
-            return;
-        }
-        Path path = cardFolderPath.resolve("default.json");
-        try {
-            projectFileService.save(path, cardFolderPath, new ArrayList<>(cardList), new ArrayList<>(cardBackList));
-            statusLabel.setText("项目已保存: default.json");
-        } catch (Exception e) {
-            showError("保存失败", e.getMessage());
-        }
-    }
 
     private void onLoadProject() {
         if (cardFolderPath == null) {
@@ -385,6 +369,17 @@ public class MainController {
         cardListView.refresh();
         cardBackListView.refresh();
         renderAllPreviews();
+        autoSave();
+    }
+
+    private void autoSave() {
+        if (cardFolderPath == null) return;
+        try {
+            projectFileService.save(cardFolderPath.resolve("default.json"), cardFolderPath,
+                    new ArrayList<>(cardList), new ArrayList<>(cardBackList));
+        } catch (Exception ignored) {
+            // 自动保存失败不打扰用户
+        }
     }
 
     private void updateCountLabels() {
