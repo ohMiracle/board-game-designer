@@ -11,9 +11,11 @@ public class CardSheet {
 
     private final int pageIndex;
     private final List<CardSlot> slots;
+    private final List<CardImage> cards;
 
     public CardSheet(int pageIndex, List<CardImage> cards) {
         this.pageIndex = pageIndex;
+        this.cards = List.copyOf(cards);
         this.slots = new ArrayList<>();
         for (int i = 0; i < cards.size(); i++) {
             int col = i % 3;
@@ -40,6 +42,10 @@ public class CardSheet {
     /**
      * 该页上的实际卡牌数量（≤9）.
      */
+    public List<CardImage> getCards() {
+        return cards;
+    }
+
     public int getCardCount() {
         return slots.size();
     }

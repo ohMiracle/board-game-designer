@@ -53,7 +53,8 @@ public class CardBack {
 
     public int getPageCount() {
         if (overridePageCount > 0) return overridePageCount;
-        return Math.max(1, (int) Math.ceil(linkedCards.size() / 9.0));
+        if (linkedCards.isEmpty()) return 0;
+        return (int) Math.ceil(linkedCards.size() / 9.0);
     }
 
     public boolean isAutoPageCount() {

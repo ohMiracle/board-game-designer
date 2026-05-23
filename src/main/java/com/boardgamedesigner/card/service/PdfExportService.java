@@ -17,6 +17,10 @@ import java.awt.image.BufferedImage;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 /**
  * A4 PDF 导出服务。将排版好的 CardSheet 列表导出为 PDF 文件.
@@ -30,24 +34,38 @@ public class PdfExportService {
     }
 
     /**
-     * 导出 CardSheet 列表为 PDF 文件.
+     * 导出已分配卡背的页面为 PDF。正面背面交替排列，背面镜像排版支持双面打印.
      *
-     * @param sheets     排版好的正面页面
+     * @param sheets     所有排版好的正面页面（含未分配）
      * @param outputPath 输出 PDF 文件路径
-     * @param cardBacks  卡背图片列表（每个卡背生成一整页背面）
+     * @param cardBacks  卡背列表
      * @return 输出文件路径
      */
-    public Path export(java.util.List<CardSheet> sheets, Path outputPath,
-                       java.util.List<CardBack> cardBacks) {
-        try (PDDocument document = new PDDocument()) {
-            for (CardSheet sheet : sheets) {
-                addPage(document, sheet);
+    public Path export(List<CardSheet> sheets, Path outputPath, List<CardBack> cardBacks) {
+        // 按卡背分组正面页，未分配的跳过
+        Map<CardBack, List<CardSheet>> backSheets = new LinkedHashMap<>();
+        for (CardSheet sheet : sheets) {
+            CardBack owner = findBackForSheet(sheet, cardBacks);
+            if (owner != null) {
+                backSheets.computeIfAbsent(owner, k -> new ArrayList<>()).add(sheet);
             }
+        }
 
-            for (CardBack cardBack : cardBacks) {
-                int pageCount = cardBack.getPageCount();
-                for (int i = 0; i < pageCount; i++) {
-                    addBackPage(document, cardBack.getImage());
+        try (PDDocument document = new PDDocument()) {
+            for (Map.Entry<CardBack, List<CardSheet>> entry : backSheets.entrySet()) {
+                CardBack back = entry.getKey();
+                List<CardSheet> frontSheets = entry.getValue();
+                int backCount = back.getPageCount();
+                int maxLen = Math.max(frontSheets.size(), backCount);
+
+                for (int i = 0; i < maxLen; i++) {
+                    if (i < frontSheets.size()) {
+                        addFrontPage(document, frontSheets.get(i));
+                    }
+                    if (i < backCount) {
+                        CardSheet frontSheet = i < frontSheets.size() ? frontSheets.get(i) : null;
+                        addBackPage(document, back.getImage(), frontSheet);
+                    }
                 }
             }
 
@@ -58,14 +76,16 @@ public class PdfExportService {
         return outputPath;
     }
 
-    /**
-     * 无卡背的导出（向后兼容）.
-     */
-    public Path export(java.util.List<CardSheet> sheets, Path outputPath) {
-        return export(sheets, outputPath, java.util.List.of());
+    private CardBack findBackForSheet(CardSheet sheet, List<CardBack> cardBacks) {
+        List<CardImage> cards = sheet.getCards();
+        if (cards.isEmpty()) return null;
+        for (CardBack cb : cardBacks) {
+            if (cb.getLinkedCards().contains(cards.get(0))) return cb;
+        }
+        return null;
     }
 
-    private void addPage(PDDocument document, CardSheet sheet) throws IOException {
+    private void addFrontPage(PDDocument document, CardSheet sheet) throws IOException {
         PDPage page = new PDPage(PDRectangle.A4);
         document.addPage(page);
 
@@ -76,7 +96,7 @@ public class PdfExportService {
         }
     }
 
-    private void addBackPage(PDDocument document, CardImage cardBack) throws IOException {
+    private void addBackPage(PDDocument document, CardImage cardBack, CardSheet frontSheet) throws IOException {
         PDPage page = new PDPage(PDRectangle.A4);
         document.addPage(page);
 
@@ -85,25 +105,36 @@ public class PdfExportService {
             return;
         }
 
+        double bleedMm = LayoutConfig.BLEED_MM;
+        int bleedPx = (int) Math.round(bleedMm / LayoutConfig.MM_PER_INCH * LayoutConfig.DPI);
         BufferedImage processed = ImageScaleUtil.scaleAndCrop(
                 original,
-                LayoutConfig.cardWidthPx(),
-                LayoutConfig.cardHeightPx()
+                LayoutConfig.cardWidthPx() + bleedPx * 2,
+                LayoutConfig.cardHeightPx() + bleedPx * 2
         );
 
         PDImageXObject pdfImage = LosslessFactory.createFromImage(document, processed);
 
         try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
-            for (int col = 0; col < LayoutConfig.COLS; col++) {
-                for (int row = 0; row < LayoutConfig.ROWS; row++) {
-                    cs.drawImage(
-                            pdfImage,
-                            (float) LayoutConfig.cardXPoints(col),
-                            (float) LayoutConfig.cardYPoints(row),
-                            (float) LayoutConfig.mmToPoints(LayoutConfig.CARD_WIDTH_MM),
-                            (float) LayoutConfig.mmToPoints(LayoutConfig.CARD_HEIGHT_MM)
-                    );
-                }
+            List<CardSlot> frontSlots = frontSheet != null ? frontSheet.getSlots() : List.of();
+            int count = frontSlots.isEmpty() ? LayoutConfig.CARDS_PER_PAGE : frontSlots.size();
+
+            float bleedPt = (float) LayoutConfig.mmToPoints(bleedMm);
+            float cardWPt = (float) LayoutConfig.mmToPoints(LayoutConfig.CARD_WIDTH_MM);
+            float cardHPt = (float) LayoutConfig.mmToPoints(LayoutConfig.CARD_HEIGHT_MM);
+
+            for (int i = 0; i < count; i++) {
+                int col = i < frontSlots.size() ? frontSlots.get(i).getCol() : i % LayoutConfig.COLS;
+                int row = i < frontSlots.size() ? frontSlots.get(i).getRow() : i / LayoutConfig.COLS;
+                int mirroredCol = LayoutConfig.COLS - 1 - col;
+
+                cs.drawImage(
+                        pdfImage,
+                        (float) LayoutConfig.cardXPoints(mirroredCol) - bleedPt,
+                        (float) LayoutConfig.cardYPoints(row) - bleedPt,
+                        cardWPt + bleedPt * 2,
+                        cardHPt + bleedPt * 2
+                );
             }
         }
     }

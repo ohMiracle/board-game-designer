@@ -22,6 +22,8 @@
         <Separator orientation="VERTICAL"/>
         <Button fx:id="exportBtn" text="导出 PDF..."
                 styleClass="primary-btn" disable="true"/>
+        <Button fx:id="printBtn" text="打印..."
+                styleClass="primary-btn" disable="true"/>
         <padding>
             <Insets topRightBottomLeft="8"/>
         </padding>
@@ -38,7 +40,7 @@
             <!-- 卡牌区 -->
             <VBox>
                 <Label fx:id="cardCountLabel" text="卡牌 (0)" styleClass="section-header"/>
-                <ListView fx:id="cardListView" VBox.vgrow="ALWAYS"/>
+                <TreeView fx:id="cardTreeView" VBox.vgrow="ALWAYS" showRoot="false"/>
                 <padding>
                     <Insets topRightBottomLeft="6"/>
                 </padding>

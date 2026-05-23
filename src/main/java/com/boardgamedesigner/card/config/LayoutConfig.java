@@ -21,6 +21,9 @@ public final class LayoutConfig {
     // PDF 导出 DPI
     public static final int DPI = 300;
 
+    // 出血 (mm) — 卡背每边扩大的尺寸，防止裁切后露白边
+    public static final double BLEED_MM = 1.0;
+
     // mm 与 point 转换常量 (1 inch = 25.4 mm, 1 point = 1/72 inch)
     public static final double MM_PER_INCH = 25.4;
     public static final double POINTS_PER_INCH = 72.0;

@@ -13,19 +13,31 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.concurrent.Task;
 import javafx.fxml.FXML;
+import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.input.MouseEvent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
+import javafx.stage.StageStyle;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.printing.PDFPrintable;
 
+import java.awt.print.PrinterJob;
 import java.io.File;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
-import java.util.function.Function;
 
 public class MainController {
 
@@ -34,10 +46,11 @@ public class MainController {
     @FXML private Button selectAllBtn;
     @FXML private Button deselectAllBtn;
     @FXML private Button exportBtn;
+    @FXML private Button printBtn;
     @FXML private Label cardCountLabel;
     @FXML private Label cardBackCountLabel;
     @FXML private Label statusLabel;
-    @FXML private ListView<CardImage> cardListView;
+    @FXML private TreeView<Object> cardTreeView;
     @FXML private ListView<CardBack> cardBackListView;
     @FXML private ScrollPane previewScrollPane;
     @FXML private VBox previewContainer;
@@ -50,37 +63,44 @@ public class MainController {
 
     private final ObservableList<CardImage> cardList = FXCollections.observableArrayList();
     private final ObservableList<CardBack> cardBackList = FXCollections.observableArrayList();
+    private final TreeItem<Object> treeRoot = new TreeItem<>();
     private List<CardSheet> sheets = List.of();
     private volatile boolean isExporting = false;
     private Path cardFolderPath;
 
+    // 右键菜单前的选中组快照
+    private final List<TreeItem<Object>> preClickSelectedGroups = new ArrayList<>();
+
     @FXML
     private void initialize() {
-        cardListView.setItems(cardList);
+        cardTreeView.setRoot(treeRoot);
+        cardTreeView.setShowRoot(false);
         cardBackListView.setItems(cardBackList);
 
-        // 正面卡牌列表的单元格工厂
-        Function<CardImage, String> backNameLookup = card -> {
-            for (CardBack cb : cardBackList) {
-                if (cb.getLinkedCards().contains(card)) return cb.getName();
+        // 右键时快照当前已选分组，用于多组批量分配卡背
+        cardTreeView.addEventFilter(MouseEvent.MOUSE_PRESSED, e -> {
+            if (!e.isSecondaryButtonDown()) return;
+            preClickSelectedGroups.clear();
+            for (TreeItem<Object> item : cardTreeView.getSelectionModel().getSelectedItems()) {
+                if (item.getValue() instanceof String) {
+                    preClickSelectedGroups.add(item);
+                }
             }
-            return null;
-        };
+        });
 
-        cardListView.setCellFactory(lv -> new CardListCell(
+        cardTreeView.setCellFactory(tv -> new CardTreeCell(
                 this::copyCard,
                 this::removeCard,
                 this::setCardBack,
-                null,
                 this::assignCardBack,
                 this::unassignCardBackForSelected,
+                this::assignBackToCards,
+                this::unassignBackFromCards,
                 () -> new ArrayList<>(cardBackList),
-                backNameLookup,
-                () -> cardList.size(),
-                this::onCardListChanged
+                this::onCardListChanged,
+                () -> new ArrayList<>(preClickSelectedGroups)
         ));
 
-        // 卡背列表的单元格工厂
         cardBackListView.setCellFactory(lv -> new CardBackListCell(
                 this::unsetCardBack,
                 this::removeCardBack,
@@ -89,7 +109,7 @@ public class MainController {
                 this::onCardListChanged
         ));
 
-        cardListView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
+        cardTreeView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         cardBackListView.getSelectionModel().setSelectionMode(SelectionMode.SINGLE);
 
         chooseFolderBtn.setOnAction(e -> onChooseFolder());
@@ -97,9 +117,26 @@ public class MainController {
         selectAllBtn.setOnAction(e -> onCopySelected());
         deselectAllBtn.setOnAction(e -> onRemoveSelected());
         exportBtn.setOnAction(e -> onExportPdf());
+        printBtn.setOnAction(e -> onPrint());
 
         selectAllBtn.setText("复制选中");
         deselectAllBtn.setText("删除选中");
+    }
+
+    // ---- 选区辅助 ----
+
+    private CardImage getSelectedCard() {
+        TreeItem<Object> sel = cardTreeView.getSelectionModel().getSelectedItem();
+        if (sel != null && sel.getValue() instanceof CardImage c) return c;
+        return null;
+    }
+
+    private List<CardImage> getSelectedCards() {
+        List<CardImage> result = new ArrayList<>();
+        for (TreeItem<Object> item : cardTreeView.getSelectionModel().getSelectedItems()) {
+            if (item.getValue() instanceof CardImage c) result.add(c);
+        }
+        return result;
     }
 
     // ---- 文件夹选择 ----
@@ -107,12 +144,11 @@ public class MainController {
     private void onChooseFolder() {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("选择卡牌图片文件夹");
-        File dir = chooser.showDialog(cardListView.getScene().getWindow());
+        File dir = chooser.showDialog(cardTreeView.getScene().getWindow());
         if (dir == null) return;
 
         cardFolderPath = dir.toPath();
 
-        // 优先加载已有的项目文件
         Path projectFile = cardFolderPath.resolve("default.json");
         if (projectFile.toFile().exists()) {
             try {
@@ -121,7 +157,6 @@ public class MainController {
                 cardBackList.setAll(result.cardBacks);
                 statusLabel.setText("已自动加载 default.json");
             } catch (Exception e) {
-                // 加载失败则回退到正常扫描
                 loadFolderFresh();
             }
         } else {
@@ -129,9 +164,12 @@ public class MainController {
         }
 
         refreshSheets();
+        buildCardTree();
         updateStatus();
         updateCountLabels();
-        exportBtn.setDisable(cardList.isEmpty());
+        boolean noCards = cardList.isEmpty();
+        exportBtn.setDisable(noCards);
+        printBtn.setDisable(noCards);
         renderAllPreviews();
     }
 
@@ -142,13 +180,10 @@ public class MainController {
         autoDetectCardBacks();
     }
 
-    // ---- 项目保存/加载 ----
-
-
     // ---- 图片分切 ----
 
     private void onSplitImage() {
-        CardImage selected = cardListView.getSelectionModel().getSelectedItem();
+        CardImage selected = getSelectedCard();
         if (selected == null) {
             showError("提示", "请先在卡牌列表中选择一张要分切的图片");
             return;
@@ -158,7 +193,6 @@ public class MainController {
             return;
         }
 
-        // 行列数输入对话框
         Dialog<int[]> dialog = new Dialog<>();
         dialog.setTitle("图片分切");
         dialog.setHeaderText("将 \"" + selected.getFileName() + "\" 均匀分切");
@@ -225,6 +259,9 @@ public class MainController {
             }
         }
         for (CardImage card : detected) {
+            for (CardBack cb : cardBackList) {
+                cb.unlinkCard(card);
+            }
             cardList.remove(card);
             cardBackList.add(new CardBack(card));
         }
@@ -233,13 +270,15 @@ public class MainController {
     // ---- 卡背操作 ----
 
     private void setCardBack(CardImage card) {
+        for (CardBack cb : cardBackList) {
+            cb.unlinkCard(card);
+        }
         cardList.remove(card);
         cardBackList.add(new CardBack(card));
         onCardListChanged();
     }
 
     private void unsetCardBack(CardBack cardBack) {
-        // 清理关联的卡牌
         for (CardImage linked : new ArrayList<>(cardBack.getLinkedCards())) {
             cardBack.unlinkCard(linked);
         }
@@ -256,7 +295,7 @@ public class MainController {
     // ---- 卡牌-卡背关联 ----
 
     private void assignCardBack(CardBack back) {
-        List<CardImage> selected = new ArrayList<>(cardListView.getSelectionModel().getSelectedItems());
+        List<CardImage> selected = getSelectedCards();
         if (selected.isEmpty()) return;
 
         for (CardImage card : selected) {
@@ -268,8 +307,25 @@ public class MainController {
     }
 
     private void unassignCardBackForSelected() {
-        List<CardImage> selected = new ArrayList<>(cardListView.getSelectionModel().getSelectedItems());
+        List<CardImage> selected = getSelectedCards();
         for (CardImage card : selected) {
+            for (CardBack cb : cardBackList) {
+                cb.unlinkCard(card);
+            }
+        }
+    }
+
+    private void assignBackToCards(List<CardImage> cards, CardBack back) {
+        for (CardImage card : cards) {
+            for (CardBack cb : cardBackList) {
+                cb.unlinkCard(card);
+            }
+            back.linkCard(card);
+        }
+    }
+
+    private void unassignBackFromCards(List<CardImage> cards) {
+        for (CardImage card : cards) {
             for (CardBack cb : cardBackList) {
                 cb.unlinkCard(card);
             }
@@ -293,7 +349,7 @@ public class MainController {
                 back.isAutoPageCount() ? "0" : String.valueOf(back.getOverridePageCount()));
         dialog.setTitle("修改页数");
         dialog.setHeaderText("卡背: " + back.getName());
-        dialog.setContentText("页数（0=自动计算，当前自动值=" + Math.max(1, (int) Math.ceil(back.getLinkedCount() / 9.0)) + "）:");
+        dialog.setContentText("页数（0=自动，当前=" + back.getPageCount() + " | 关联=" + back.getLinkedCount() + "张）:");
 
         Optional<String> result = dialog.showAndWait();
         result.ifPresent(val -> {
@@ -316,7 +372,6 @@ public class MainController {
     }
 
     private void removeCard(CardImage target) {
-        // 清理该卡牌在所有卡背中的关联
         for (CardBack cb : cardBackList) {
             cb.unlinkCard(target);
         }
@@ -324,30 +379,79 @@ public class MainController {
     }
 
     private void onCopySelected() {
-        CardImage selected = cardListView.getSelectionModel().getSelectedItem();
-        if (selected != null) {
-            copyCard(selected);
-            onCardListChanged();
+        List<CardImage> selected = getSelectedCards();
+        if (selected.isEmpty()) return;
+        for (int i = selected.size() - 1; i >= 0; i--) {
+            copyCard(selected.get(i));
         }
+        onCardListChanged();
     }
 
     private void onRemoveSelected() {
-        CardImage selected = cardListView.getSelectionModel().getSelectedItem();
-        if (selected != null) {
-            removeCard(selected);
-            onCardListChanged();
+        List<CardImage> selected = getSelectedCards();
+        if (selected.isEmpty()) return;
+        for (CardImage card : selected) {
+            removeCard(card);
         }
+        onCardListChanged();
     }
 
     private void onCardListChanged() {
         refreshSheets();
+        buildCardTree();
         updateStatus();
         updateCountLabels();
-        exportBtn.setDisable(cardList.isEmpty());
-        cardListView.refresh();
+        boolean noCards = cardList.isEmpty();
+        exportBtn.setDisable(noCards);
+        printBtn.setDisable(noCards);
         cardBackListView.refresh();
         renderAllPreviews();
         autoSave();
+    }
+
+    // ---- 树形视图构建 ----
+
+    private void buildCardTree() {
+        List<TreeItem<Object>> groups = new ArrayList<>();
+
+        Map<CardBack, Integer> backPageCounter = new LinkedHashMap<>();
+        for (CardBack cb : cardBackList) {
+            backPageCounter.put(cb, 0);
+        }
+        int unassignedPage = 0;
+
+        for (CardSheet sheet : sheets) {
+            List<CardImage> cards = sheet.getCards();
+            if (cards.isEmpty()) continue;
+
+            // 判断该 sheet 属于哪个卡背
+            CardBack owner = null;
+            for (CardBack cb : cardBackList) {
+                if (cb.getLinkedCards().contains(cards.get(0))) {
+                    owner = cb;
+                    break;
+                }
+            }
+
+            String groupName;
+            if (owner != null) {
+                int page = backPageCounter.get(owner) + 1;
+                backPageCounter.put(owner, page);
+                groupName = owner.getName() + " - 第" + page + "页 (" + cards.size() + "张)";
+            } else {
+                unassignedPage++;
+                groupName = "未分配 - 第" + unassignedPage + "页 (" + cards.size() + "张)";
+            }
+
+            TreeItem<Object> group = new TreeItem<>(groupName);
+            group.setExpanded(false);
+            for (CardImage card : cards) {
+                group.getChildren().add(new TreeItem<>(card));
+            }
+            groups.add(group);
+        }
+
+        treeRoot.getChildren().setAll(groups);
     }
 
     private void autoSave() {
@@ -356,7 +460,6 @@ public class MainController {
             projectFileService.save(cardFolderPath.resolve("default.json"), cardFolderPath,
                     new ArrayList<>(cardList), new ArrayList<>(cardBackList));
         } catch (Exception ignored) {
-            // 自动保存失败不打扰用户
         }
     }
 
@@ -369,9 +472,20 @@ public class MainController {
     // ---- 预览渲染 ----
 
     private void refreshSheets() {
-        // 按卡背分组排版：不同卡背的卡牌不在同一页
         List<CardImage> remaining = new ArrayList<>(cardList);
         List<CardSheet> allSheets = new ArrayList<>();
+
+        // 去重：每张卡牌最多关联一个卡背
+        List<CardImage> seen = new ArrayList<>();
+        for (CardBack cb : cardBackList) {
+            for (CardImage card : new ArrayList<>(cb.getLinkedCards())) {
+                if (seen.contains(card)) {
+                    cb.unlinkCard(card);
+                } else {
+                    seen.add(card);
+                }
+            }
+        }
 
         for (CardBack cb : cardBackList) {
             List<CardImage> group = new ArrayList<>();
@@ -386,7 +500,6 @@ public class MainController {
             }
         }
 
-        // 未分配卡背的卡牌放在最后
         if (!remaining.isEmpty()) {
             allSheets.addAll(layoutCalculator.calculateSheets(remaining));
         }
@@ -397,8 +510,13 @@ public class MainController {
     private void renderAllPreviews() {
         previewContainer.getChildren().clear();
 
+        // 仅统计已分配卡背的页面
+        int assignedSheetCount = 0;
+        for (CardSheet sheet : sheets) {
+            if (findBackForSheet(sheet) != null) assignedSheetCount++;
+        }
         int backPages = cardBackList.stream().mapToInt(CardBack::getPageCount).sum();
-        int totalPages = sheets.size() + backPages;
+        int totalPages = assignedSheetCount + backPages;
 
         if (sheets.isEmpty() && cardBackList.isEmpty()) {
             Label emptyLabel = new Label("（空页面）");
@@ -407,31 +525,60 @@ public class MainController {
             return;
         }
 
-        int pageNum = 1;
-        for (int i = 0; i < sheets.size(); i++) {
-            PreviewPage page = new PreviewPage();
-            page.drawFront(sheets.get(i), pageNum++, totalPages);
-            previewContainer.getChildren().add(page);
+        // 按卡背分组 sheet（未分配的跳过）
+        Map<CardBack, List<CardSheet>> backSheets = new LinkedHashMap<>();
+        for (CardSheet sheet : sheets) {
+            CardBack owner = findBackForSheet(sheet);
+            if (owner != null) {
+                backSheets.computeIfAbsent(owner, k -> new ArrayList<>()).add(sheet);
+            }
         }
 
-        for (CardBack cardBack : cardBackList) {
-            int count = cardBack.getPageCount();
-            for (int i = 0; i < count; i++) {
-                PreviewPage back = new PreviewPage();
-                back.drawBack(cardBack.getImage(), pageNum++, totalPages);
-                previewContainer.getChildren().add(back);
+        int pageNum = 1;
+        for (Map.Entry<CardBack, List<CardSheet>> entry : backSheets.entrySet()) {
+            CardBack back = entry.getKey();
+            int backCount = back.getPageCount();
+            List<CardSheet> frontSheets = entry.getValue();
+
+            int maxLen = Math.max(frontSheets.size(), backCount);
+            for (int i = 0; i < maxLen; i++) {
+                if (i < frontSheets.size()) {
+                    PreviewPage page = new PreviewPage();
+                    page.drawFront(frontSheets.get(i), pageNum++, totalPages);
+                    previewContainer.getChildren().add(page);
+                }
+                if (i < backCount) {
+                    PreviewPage backPage = new PreviewPage();
+                    CardSheet frontSheet = i < frontSheets.size() ? frontSheets.get(i) : null;
+                    backPage.drawBack(back.getImage(), frontSheet, pageNum++, totalPages);
+                    previewContainer.getChildren().add(backPage);
+                }
             }
         }
     }
 
+    private CardBack findBackForSheet(CardSheet sheet) {
+        List<CardImage> cards = sheet.getCards();
+        if (cards.isEmpty()) return null;
+        for (CardBack cb : cardBackList) {
+            if (cb.getLinkedCards().contains(cards.get(0))) return cb;
+        }
+        return null;
+    }
+
     private void updateStatus() {
-        int frontPages = sheets.size();
+        int assignedSheets = 0;
+        for (CardSheet sheet : sheets) {
+            if (findBackForSheet(sheet) != null) assignedSheets++;
+        }
         int backPages = cardBackList.stream().mapToInt(CardBack::getPageCount).sum();
-        int totalPages = frontPages + backPages;
+        int totalPages = assignedSheets + backPages;
+        int unassigned = cardList.size() - cardBackList.stream().mapToInt(CardBack::getLinkedCount).sum();
         String info = !cardBackList.isEmpty()
                 ? " | 背面 " + backPages + " 页"
                 : "";
-        statusLabel.setText("共 " + cardList.size() + " 张卡牌 | 预计 " + totalPages + " 页" + info);
+        String unassignedInfo = unassigned > 0 ? " | 未分配 " + unassigned + " 张（不打印）" : "";
+        statusLabel.setText("共 " + cardList.size() + " 张卡牌 | 预计 " + totalPages + " 页" + info + unassignedInfo);
     }
 
     // ---- PDF 导出 ----
@@ -447,14 +594,26 @@ public class MainController {
         }
 
         String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("MMdd_HHmmss"));
+        // 只计算已分配卡背的页数（未分配的不导出）
+        int assignedSheets = 0;
+        for (CardSheet sheet : sheets) {
+            if (findBackForSheet(sheet) != null) assignedSheets++;
+        }
         int backPages = cardBackList.stream().mapToInt(CardBack::getPageCount).sum();
-        int totalPages = sheets.size() + backPages;
+        int totalPages = assignedSheets + backPages;
+        if (totalPages == 0) {
+            showError("提示", "没有已分配卡背的卡牌可导出");
+            return;
+        }
         String fileName = "卡牌打印_" + totalPages + "页_" + ts + ".pdf";
         Path outputPath = cardFolderPath.resolve(fileName);
 
         isExporting = true;
         exportBtn.setDisable(true);
+        printBtn.setDisable(true);
         statusLabel.setText("正在导出 PDF → " + fileName + " ...");
+
+        Stage progressStage = showProgressStage("正在导出 PDF...");
 
         List<CardBack> backs = new ArrayList<>(this.cardBackList);
 
@@ -466,22 +625,121 @@ public class MainController {
 
             @Override
             protected void succeeded() {
+                progressStage.close();
                 isExporting = false;
                 exportBtn.setDisable(false);
+                printBtn.setDisable(false);
                 statusLabel.setText("导出完成: " + outputPath.getFileName());
                 showInfo("导出成功", "PDF 已保存到:\n" + outputPath.toAbsolutePath());
             }
 
             @Override
             protected void failed() {
+                progressStage.close();
                 isExporting = false;
                 exportBtn.setDisable(false);
+                printBtn.setDisable(false);
                 statusLabel.setText("导出失败");
                 showError("导出失败", getException().getMessage());
             }
         };
 
         new Thread(task).start();
+    }
+
+    // ---- 打印 ----
+
+    private void onPrint() {
+        if (sheets.isEmpty()) {
+            showError("提示", "没有可打印的卡牌");
+            return;
+        }
+        if (cardFolderPath == null) {
+            showError("错误", "未选择卡牌文件夹");
+            return;
+        }
+
+        int assignedSheets = 0;
+        for (CardSheet sheet : sheets) {
+            if (findBackForSheet(sheet) != null) assignedSheets++;
+        }
+        if (assignedSheets == 0) {
+            showError("提示", "没有已分配卡背的卡牌可打印");
+            return;
+        }
+
+        List<CardBack> backs = new ArrayList<>(this.cardBackList);
+        statusLabel.setText("正在准备打印...");
+        printBtn.setDisable(true);
+        exportBtn.setDisable(true);
+
+        Stage progressStage = showProgressStage("正在准备打印...");
+
+        Task<Void> task = new Task<>() {
+            @Override
+            protected Void call() throws Exception {
+                Path tempFile = Files.createTempFile("card_print_", ".pdf");
+                try {
+                    pdfExportService.export(sheets, tempFile, backs);
+
+                    PrinterJob job = PrinterJob.getPrinterJob();
+                    PDDocument doc = PDDocument.load(tempFile.toFile());
+                    job.setPrintable(new PDFPrintable(doc));
+
+                    if (job.printDialog()) {
+                        job.print();
+                    }
+                    doc.close();
+                    Files.deleteIfExists(tempFile);
+                } catch (Exception e) {
+                    try { Files.deleteIfExists(tempFile); } catch (Exception ignored) {}
+                    throw e;
+                }
+                return null;
+            }
+
+            @Override
+            protected void succeeded() {
+                progressStage.close();
+                printBtn.setDisable(false);
+                exportBtn.setDisable(false);
+                statusLabel.setText("打印完成");
+            }
+
+            @Override
+            protected void failed() {
+                progressStage.close();
+                printBtn.setDisable(false);
+                exportBtn.setDisable(false);
+                statusLabel.setText("打印失败");
+                showError("打印失败", getException().getMessage());
+            }
+        };
+
+        new Thread(task).start();
+    }
+
+    private Stage showProgressStage(String message) {
+        Stage stage = new Stage();
+        stage.initModality(Modality.APPLICATION_MODAL);
+        stage.initStyle(StageStyle.TRANSPARENT);
+        stage.setResizable(false);
+
+        ProgressIndicator pi = new ProgressIndicator();
+        pi.setPrefSize(48, 48);
+        Label label = new Label(message);
+        label.setStyle("-fx-font-size: 13px;");
+
+        VBox box = new VBox(16, pi, label);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(24));
+        box.setStyle("-fx-background-color: white; -fx-border-color: #ccc; -fx-border-radius: 8; -fx-background-radius: 8;");
+
+        Scene scene = new Scene(box);
+        scene.setFill(javafx.scene.paint.Color.TRANSPARENT);
+        stage.setScene(scene);
+        stage.show();
+        return stage;
     }
 
     private void showError(String title, String msg) {

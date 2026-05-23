@@ -12,6 +12,7 @@ import javafx.scene.text.TextAlignment;
 
 import java.nio.file.Path;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -72,9 +73,9 @@ public class PreviewPage extends Canvas {
     }
 
     /**
-     * 绘制该页的背面（3×3 满铺卡背）.
+     * 绘制该页的背面——与对应正面页卡牌数量一致，列位置左右镜像，方便双面打印.
      */
-    public void drawBack(CardImage cardBack, int pageNum, int totalPages) {
+    public void drawBack(CardImage cardBack, CardSheet frontSheet, int pageNum, int totalPages) {
         GraphicsContext gc = getGraphicsContext2D();
         double cw = getWidth();
         double ch = getHeight();
@@ -94,28 +95,38 @@ public class PreviewPage extends Canvas {
         if (cardBack == null) return;
 
         Image backImg = loadPreviewImage(cardBack.getSourcePath());
+        double bleedMm = LayoutConfig.BLEED_MM;
         double cardW = LayoutConfig.CARD_WIDTH_MM / LayoutConfig.PAPER_WIDTH_MM * cw;
         double cardH = LayoutConfig.CARD_HEIGHT_MM / LayoutConfig.PAPER_HEIGHT_MM * ch;
+        double bleedW = bleedMm / LayoutConfig.PAPER_WIDTH_MM * cw;
+        double bleedH = bleedMm / LayoutConfig.PAPER_HEIGHT_MM * ch;
 
-        for (int col = 0; col < 3; col++) {
-            for (int row = 0; row < 3; row++) {
-                double x = (LayoutConfig.HORIZONTAL_MARGIN_MM
-                        + col * (LayoutConfig.CARD_WIDTH_MM + LayoutConfig.HORIZONTAL_MARGIN_MM))
-                        / LayoutConfig.PAPER_WIDTH_MM * cw;
-                double y = (LayoutConfig.VERTICAL_MARGIN_MM
-                        + row * (LayoutConfig.CARD_HEIGHT_MM + LayoutConfig.VERTICAL_MARGIN_MM))
-                        / LayoutConfig.PAPER_HEIGHT_MM * ch;
+        List<CardSlot> frontSlots = frontSheet != null ? frontSheet.getSlots() : List.of();
+        int count = frontSlots.isEmpty() ? LayoutConfig.CARDS_PER_PAGE : frontSlots.size();
 
-                gc.setStroke(Color.LIGHTGRAY);
-                gc.setLineWidth(0.5);
-                gc.strokeRect(x, y, cardW, cardH);
+        for (int i = 0; i < count; i++) {
+            int col = i < frontSlots.size() ? frontSlots.get(i).getCol() : i % LayoutConfig.COLS;
+            int row = i < frontSlots.size() ? frontSlots.get(i).getRow() : i / LayoutConfig.COLS;
+            int mirroredCol = LayoutConfig.COLS - 1 - col;
 
-                if (backImg != null) {
-                    gc.drawImage(backImg, x, y, cardW, cardH);
-                } else {
-                    gc.setFill(Color.LIGHTGRAY);
-                    gc.fillRect(x, y, cardW, cardH);
-                }
+            double x = (LayoutConfig.HORIZONTAL_MARGIN_MM
+                    + mirroredCol * (LayoutConfig.CARD_WIDTH_MM + LayoutConfig.HORIZONTAL_MARGIN_MM))
+                    / LayoutConfig.PAPER_WIDTH_MM * cw;
+            double y = (LayoutConfig.VERTICAL_MARGIN_MM
+                    + row * (LayoutConfig.CARD_HEIGHT_MM + LayoutConfig.VERTICAL_MARGIN_MM))
+                    / LayoutConfig.PAPER_HEIGHT_MM * ch;
+
+            // 卡背外扩 bleedMm，居中放大绘制
+            double bleedX = x - bleedW;
+            double bleedY = y - bleedH;
+            double bleedCardW = cardW + bleedW * 2;
+            double bleedCardH = cardH + bleedH * 2;
+
+            if (backImg != null) {
+                gc.drawImage(backImg, bleedX, bleedY, bleedCardW, bleedCardH);
+            } else {
+                gc.setFill(Color.LIGHTGRAY);
+                gc.fillRect(bleedX, bleedY, bleedCardW, bleedCardH);
             }
         }
     }
