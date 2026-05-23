@@ -1,0 +1,72 @@
+/* 全局样式 */
+.root {
+    -fx-font-family: "Microsoft YaHei", "SimHei", sans-serif;
+    -fx-font-size: 13px;
+}
+
+.toolbar {
+    -fx-background-color: #f5f5f5;
+    -fx-border-color: #e0e0e0;
+    -fx-border-width: 0 0 1 0;
+}
+
+.primary-btn {
+    -fx-background-color: #1976d2;
+    -fx-text-fill: white;
+    -fx-font-weight: bold;
+    -fx-min-width: 130px;
+}
+
+.primary-btn:hover {
+    -fx-background-color: #1565c0;
+}
+
+.primary-btn:disabled {
+    -fx-background-color: #bbb;
+    -fx-opacity: 1;
+}
+
+.toolbar > Button {
+    -fx-min-width: 75px;
+    -fx-padding: 4 10;
+}
+
+.card-list-panel {
+    -fx-background-color: #fafafa;
+    -fx-min-width: 180px;
+    -fx-pref-width: 220px;
+}
+
+.section-header {
+    -fx-font-weight: bold;
+    -fx-font-size: 14px;
+    -fx-padding: 0 0 4 0;
+}
+
+.preview-scroll {
+    -fx-background-color: #d0d0d0;
+}
+
+.preview-container {
+    -fx-padding: 16 8 16 8;
+    -fx-background-color: #d0d0d0;
+}
+
+.preview-scroll > .viewport {
+    -fx-background-color: #d0d0d0;
+}
+
+.hint-bar {
+    -fx-background-color: #e3f2fd;
+    -fx-text-fill: #1565c0;
+    -fx-font-size: 11px;
+    -fx-padding: 2 8 2 8;
+    -fx-border-color: #bbdefb;
+    -fx-border-width: 0 0 1 0;
+}
+
+.status-bar {
+    -fx-background-color: #f5f5f5;
+    -fx-border-color: #e0e0e0;
+    -fx-border-width: 1 0 0 0;
+}

@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns="http://javafx.com/javafx"
+      xmlns:fx="http://javafx.com/fxml"
+      fx:controller="com.boardgamedesigner.ui.MainController"
+      prefWidth="1024" prefHeight="680"
+      stylesheets="@style.css">
+
+    <!-- 顶部工具栏 -->
+    <HBox spacing="10" alignment="CENTER_LEFT" styleClass="toolbar">
+        <Button fx:id="chooseFolderBtn" text="选择卡牌文件夹..."
+                styleClass="primary-btn"/>
+        <Separator orientation="VERTICAL"/>
+        <Button fx:id="selectAllBtn" text="复制选中"/>
+        <Button fx:id="deselectAllBtn" text="删除选中"/>
+        <Separator orientation="VERTICAL"/>
+        <Button fx:id="exportBtn" text="导出 PDF..."
+                styleClass="primary-btn" disable="true"/>
+        <padding>
+            <Insets topRightBottomLeft="8"/>
+        </padding>
+    </HBox>
+
+    <!-- 提示条 -->
+    <Label styleClass="hint-bar"
+           text="提示：右键卡牌可「复制」/「删除」/「设为卡背」| 拖拽可排序 | PDF 自动保存到卡牌文件夹"/>
+
+    <!-- 主体区域：左右分栏 -->
+    <SplitPane dividerPositions="0.22" VBox.vgrow="ALWAYS">
+        <!-- 左侧：卡牌 + 卡背双层列表 -->
+        <SplitPane orientation="VERTICAL" dividerPositions="0.6" styleClass="card-list-panel">
+            <!-- 卡牌区 -->
+            <VBox>
+                <Label fx:id="cardCountLabel" text="卡牌 (0)" styleClass="section-header"/>
+                <ListView fx:id="cardListView" VBox.vgrow="ALWAYS"/>
+                <padding>
+                    <Insets topRightBottomLeft="6"/>
+                </padding>
+            </VBox>
+
+            <!-- 卡背区 -->
+            <VBox>
+                <Label fx:id="cardBackCountLabel" text="卡背 (0)" styleClass="section-header"/>
+                <ListView fx:id="cardBackListView" VBox.vgrow="ALWAYS"/>
+                <padding>
+                    <Insets topRightBottomLeft="6"/>
+                </padding>
+            </VBox>
+        </SplitPane>
+
+        <!-- 右侧：全页预览（滚动） -->
+        <ScrollPane fx:id="previewScrollPane" styleClass="preview-scroll" fitToWidth="true">
+            <VBox fx:id="previewContainer" alignment="TOP_CENTER" spacing="16"
+                  styleClass="preview-container"/>
+        </ScrollPane>
+    </SplitPane>
+
+    <!-- 底部状态栏 -->
+    <HBox styleClass="status-bar" spacing="10" alignment="CENTER_LEFT">
+        <Label fx:id="statusLabel" text="就绪"/>
+        <padding>
+            <Insets topRightBottomLeft="6"/>
+        </padding>
+    </HBox>
+</VBox>
